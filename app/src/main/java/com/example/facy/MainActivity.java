@@ -1,25 +1,24 @@
 package com.example.facy;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.text.method.ScrollingMovementMethod;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.activity.EdgeToEdge;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.core.graphics.Insets;
-import androidx.core.view.ViewCompat;
-import androidx.core.view.WindowInsetsCompat;
 
 import com.google.android.gms.tasks.OnSuccessListener;
-import com.google.android.gms.tasks.Task;
 import com.google.firebase.FirebaseApp;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
@@ -31,115 +30,159 @@ import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
 
-    Button btn;
-    TextView textView;
-    ImageView imageView;
+    private Button btn;
+    private TextView textView;
+    private ImageView imageView;
 
-    private final static int REQUEST_IMAGE_CAPTURE = 124;
-    InputImage firebaseVisionImage;
-    FaceDetection visionFaceDetector;
+    private static final int REQUEST_IMAGE_CAPTURE = 124;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
+        // Инициализация UI компонентов
         btn = findViewById(R.id.cameraBtn);
         textView = findViewById(R.id.text1);
         imageView = findViewById(R.id.image);
 
+        // Инициализация Firebase
         FirebaseApp.initializeApp(this);
+
+        // Установка обработчика нажатия на кнопку
         btn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                OpenFile();
+                openCamera();
             }
         });
+
         Toast.makeText(this, "App is started", Toast.LENGTH_SHORT).show();
     }
 
-    private void OpenFile() {
+    // Метод для открытия камеры
+    private void openCamera() {
         Intent intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
         if (intent.resolveActivity(getPackageManager()) != null) {
             startActivityForResult(intent, REQUEST_IMAGE_CAPTURE);
         } else {
-            Toast.makeText(this, "Failed!", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Failed to open camera", Toast.LENGTH_SHORT).show();
         }
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        Bundle bundle = data.getExtras();
-        Bitmap bitmap = (Bitmap) bundle.get("data");
-        FaceDetectionProcess(bitmap);
-        Toast.makeText(this, "Success", Toast.LENGTH_SHORT).show();
+        if (requestCode == REQUEST_IMAGE_CAPTURE && resultCode == RESULT_OK && data != null) {
+            Bundle bundle = data.getExtras();
+            if (bundle != null) {
+                Bitmap bitmap = (Bitmap) bundle.get("data");
+                if (bitmap != null) {
+                    processFaceDetection(bitmap);
+                } else {
+                    Toast.makeText(this, "Failed to capture image", Toast.LENGTH_SHORT).show();
+                }
+            } else {
+                Toast.makeText(this, "No data found", Toast.LENGTH_SHORT).show();
+            }
+        } else {
+            Toast.makeText(this, "Failed to capture image", Toast.LENGTH_SHORT).show();
+        }
     }
 
-    private void FaceDetectionProcess(Bitmap bitmap) {
+    // Метод для обработки обнаружения лиц
+    private void processFaceDetection(Bitmap bitmap) {
         textView.setText("Face Detection");
-        final StringBuilder stringBuilder = new StringBuilder();
-        BitmapDrawable bitmapDrawable = (BitmapDrawable) imageView.getDrawable();
+        StringBuilder stringBuilder = new StringBuilder();
+        imageView.setImageBitmap(bitmap);
+
         InputImage image = InputImage.fromBitmap(bitmap, 0);
-        FaceDetectorOptions highAccuracyOpt = new FaceDetectorOptions.Builder()
+        FaceDetectorOptions highAccuracyOpts = new FaceDetectorOptions.Builder()
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
                 .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-                .enableTracking().build();
-        FaceDetector detector = FaceDetection.getClient(highAccuracyOpt);
-        Task<List<Face>> result = detector.process(image);
-        result.addOnSuccessListener(new OnSuccessListener<List<Face>>() {
-            @Override
-            public void onSuccess(List<Face> faces) {
-                //tilting and rotation detection
-                if (faces.size() != 0) {
-                    if (faces.size() == 1) {
-                        stringBuilder.append(faces.size() + "Faces detected\n\n");
-                    } else if (faces.size() > 1) {
-                        stringBuilder.append(faces.size() + "Faces detected");
+                .enableTracking()
+                .build();
+
+        FaceDetector detector = FaceDetection.getClient(highAccuracyOpts);
+        detector.process(image)
+                .addOnSuccessListener(new OnSuccessListener<List<Face>>() {
+                    @Override
+                    public void onSuccess(List<Face> faces) {
+                        handleSuccess(faces, stringBuilder);
                     }
-                }
-                for (Face face : faces) {
-                    int id = face.getTrackingId();
-                    float rotY = face.getHeadEulerAngleY();
-                    float rotZ = face.getHeadEulerAngleZ();
-                    stringBuilder.append("1. Face tracking ID [" + id + "]\n");
-                    stringBuilder.append("2. Head rotation to right ["
-                            + String.format("%.2f", rotY) + " deg. ]\n");
-                    stringBuilder.append("3. Head tilted sideways ["
-                            + String.format("%.2f", rotZ) + " deg. ]\n");
-                    // smiling probability
-                    if (face.getSmilingProbability() > 0) {
-                        float smilingProbability = face.getSmilingProbability();
-                        stringBuilder.append("4. Smiling probability ["
-                                + String.format("%.2f", smilingProbability) + "]\n");
-                    }
-                    // left eye open probability
-                    if (face.getLeftEyeOpenProbability() > 0) {
-                        float leftEyeOpenProbability = face.getLeftEyeOpenProbability();
-                        stringBuilder.append("4. Left eye open probability ["
-                                + String.format("%.2f", leftEyeOpenProbability) + "]\n");
-                    }
-                    // right eye open probability
-                    if (face.getRightEyeOpenProbability() > 0) {
-                        float rightEyeOpenProbability = face.getRightEyeOpenProbability();
-                        stringBuilder.append("4. Right eye open probability ["
-                                + String.format("%.2f", rightEyeOpenProbability) + "]\n");
-                    }
-                    stringBuilder.append("\n");
-                }
-                ShowDetection("Face Detection", stringBuilder, true);
-            }
-        });
-        result.addOnFailureListener(e -> {
-            StringBuilder builderFailure = new StringBuilder();
-            builderFailure.append("Face Detection Failed");
-            ShowDetection("Face Detection", builderFailure, false);
-        });
+                })
+                .addOnFailureListener(e -> {
+                    StringBuilder builderFailure = new StringBuilder("Face Detection Failed");
+                    showDetectionResult("Face Detection", builderFailure, false);
+                });
     }
 
-    public void ShowDetection(final String title, final StringBuilder stringBuilder, final boolean isSuccess) {
+    // Метод для обработки успешного обнаружения лиц
+    private void handleSuccess(List<Face> faces, StringBuilder stringBuilder) {
+        if (!faces.isEmpty()) {
+            if (faces.size() == 1) {
+                stringBuilder.append(faces.size()).append(" Face detected\n\n");
+            } else {
+                stringBuilder.append(faces.size()).append(" Faces detected\n\n");
+            }
+            for (Face face : faces) {
+                int id = face.getTrackingId();
+                float rotY = face.getHeadEulerAngleY();
+                float rotZ = face.getHeadEulerAngleZ();
 
+                stringBuilder.append("1. Face tracking ID [").append(id).append("]\n")
+                        .append("2. Head rotation to right [").append(String.format("%.2f", rotY)).append(" deg.]\n")
+                        .append("3. Head tilted sideways [").append(String.format("%.2f", rotZ)).append(" deg.]\n");
+
+                if (face.getSmilingProbability() != null) {
+                    float smilingProbability = face.getSmilingProbability();
+                    stringBuilder.append("4. Smiling probability [")
+                            .append(String.format("%.2f", smilingProbability)).append("]\n");
+                }
+
+                if (face.getLeftEyeOpenProbability() != null) {
+                    float leftEyeOpenProbability = face.getLeftEyeOpenProbability();
+                    stringBuilder.append("5. Left eye open probability [")
+                            .append(String.format("%.2f", leftEyeOpenProbability)).append("]\n");
+                }
+
+                if (face.getRightEyeOpenProbability() != null) {
+                    float rightEyeOpenProbability = face.getRightEyeOpenProbability();
+                    stringBuilder.append("6. Right eye open probability [")
+                            .append(String.format("%.2f", rightEyeOpenProbability)).append("]\n");
+                }
+
+                stringBuilder.append("\n");
+            }
+            showDetectionResult("Face Detection", stringBuilder, true);
+        } else {
+            stringBuilder.append("No faces detected");
+            showDetectionResult("Face Detection", stringBuilder, false);
+        }
+    }
+
+    // Метод для отображения результатов обнаружения лиц
+    private void showDetectionResult(final String title, final StringBuilder stringBuilder, final boolean isSuccess) {
+        textView.setText(null);
+        textView.setMovementMethod(new ScrollingMovementMethod());
+
+        if (isSuccess) {
+            textView.append(stringBuilder);
+            textView.append("\n(Hold the text to copy)");
+
+            textView.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    ClipboardManager clipboardManager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    ClipData clipData = ClipData.newPlainText(title, stringBuilder);
+                    clipboardManager.setPrimaryClip(clipData);
+                    Toast.makeText(MainActivity.this, "Text copied", Toast.LENGTH_SHORT).show();
+                    return true;
+                }
+            });
+        } else {
+            textView.append(stringBuilder);
+        }
     }
 }
